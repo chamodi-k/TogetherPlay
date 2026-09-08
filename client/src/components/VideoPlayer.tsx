@@ -1,0 +1,505 @@
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { Play, Pause, RotateCcw, Volume2, VolumeX, Maximize, Settings, Radio } from 'lucide-react';
+import { getSocket } from '../services/socket.ts';
+import { ReactionsOverlay } from './ReactionsOverlay.tsx';
+import { FloatingReaction } from '../types/index.ts';
+
+interface VideoPlayerProps {
+  roomCode: string;
+  isHost: boolean;
+  hostOnlyControls: boolean;
+  reactions: FloatingReaction[];
+  onVideoChangeRequest: () => void;
+}
+
+// Helper: Extract YouTube ID
+function extractYouTubeId(url: string): string | null {
+  if (!url) return null;
+  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
+  const match = url.match(regExp);
+  return match && match[2].length === 11 ? match[2] : null;
+}
+
+export const VideoPlayer: React.FC<VideoPlayerProps> = ({
+  roomCode,
+  isHost,
+  hostOnlyControls,
+  reactions,
+  onVideoChangeRequest,
+}) => {
+  const socket = getSocket();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const html5VideoRef = useRef<HTMLVideoElement>(null);
+  const ytPlayerRef = useRef<any>(null);
+
+  const [videoUrl, setVideoUrl] = useState<string>('https://www.youtube.com/watch?v=aqz-KE-bpKQ');
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [currentTime, setCurrentTime] = useState<number>(0);
+  const [duration, setDuration] = useState<number>(0);
+  const [volume, setVolume] = useState<number>(0.8);
+  const [isMuted, setIsMuted] = useState<boolean>(false);
+  const [driftNotification, setDriftNotification] = useState<string | null>(null);
+
+  // Flags to prevent echo loops when receiving remote socket events
+  const isRemoteAction = useRef<boolean>(false);
+  const youtubeReady = useRef<boolean>(false);
+
+  const youtubeId = extractYouTubeId(videoUrl);
+
+  // Load YouTube Iframe API once
+  useEffect(() => {
+    if (youtubeId && !(window as any).YT) {
+      const tag = document.createElement('script');
+      tag.src = 'https://www.youtube.com/iframe_api';
+      const firstScriptTag = document.getElementsByTagName('script')[0];
+      firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
+    }
+  }, [youtubeId]);
+
+  // Initialize or update YouTube Player
+  useEffect(() => {
+    if (!youtubeId) return;
+
+    const initYT = () => {
+      if (ytPlayerRef.current) {
+        ytPlayerRef.current.loadVideoById(youtubeId);
+        return;
+      }
+
+      ytPlayerRef.current = new (window as any).YT.Player('yt-player-container', {
+        videoId: youtubeId,
+        playerVars: {
+          autoplay: 0,
+          controls: 0,
+          disablekb: 1,
+          modestbranding: 1,
+          rel: 0,
+        },
+        events: {
+          onReady: () => {
+            youtubeReady.current = true;
+            ytPlayerRef.current.setVolume(volume * 100);
+            setDuration(ytPlayerRef.current.getDuration() || 0);
+          },
+          onStateChange: (event: any) => {
+            // YT.PlayerState.PLAYING = 1, PAUSED = 2
+            if (isRemoteAction.current) return;
+
+            if (event.data === 1 && !isPlaying) {
+              if (hostOnlyControls && !isHost) {
+                ytPlayerRef.current.pauseVideo();
+                return;
+              }
+              const time = ytPlayerRef.current.getCurrentTime();
+              socket.emit('video:play', { currentTime: time });
+            } else if (event.data === 2 && isPlaying) {
+              if (hostOnlyControls && !isHost) {
+                ytPlayerRef.current.playVideo();
+                return;
+              }
+              const time = ytPlayerRef.current.getCurrentTime();
+              socket.emit('video:pause', { currentTime: time });
+            }
+          },
+        },
+      });
+    };
+
+    if ((window as any).YT && (window as any).YT.Player) {
+      initYT();
+    } else {
+      (window as any).onYouTubeIframeAPIReady = initYT;
+    }
+  }, [youtubeId]);
+
+  // Update progress timer
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (youtubeId && ytPlayerRef.current && youtubeReady.current) {
+        try {
+          const t = ytPlayerRef.current.getCurrentTime();
+          const d = ytPlayerRef.current.getDuration();
+          if (t !== undefined) setCurrentTime(t);
+          if (d !== undefined && d > 0) setDuration(d);
+        } catch (e) {}
+      } else if (html5VideoRef.current) {
+        setCurrentTime(html5VideoRef.current.currentTime);
+        setDuration(html5VideoRef.current.duration || 0);
+      }
+    }, 500);
+
+    return () => clearInterval(timer);
+  }, [youtubeId]);
+
+  // Socket event listeners for Video Synchronization
+  useEffect(() => {
+    // 1. Initial Sync on join (Phase 9)
+    const handleSync = (data: any) => {
+      console.log('🔄 Initial Video Sync received:', data);
+      if (data.videoUrl && data.videoUrl !== videoUrl) {
+        setVideoUrl(data.videoUrl);
+      }
+
+      isRemoteAction.current = true;
+      const targetTime = data.currentTime || 0;
+
+      if (youtubeId && ytPlayerRef.current && youtubeReady.current) {
+        try {
+          ytPlayerRef.current.seekTo(targetTime, true);
+          if (data.isPlaying) {
+            ytPlayerRef.current.playVideo();
+          } else {
+            ytPlayerRef.current.pauseVideo();
+          }
+        } catch (e) {}
+      } else if (html5VideoRef.current) {
+        html5VideoRef.current.currentTime = targetTime;
+        if (data.isPlaying) {
+          html5VideoRef.current.play().catch(() => {});
+        } else {
+          html5VideoRef.current.pause();
+        }
+      }
+
+      setIsPlaying(data.isPlaying);
+      setCurrentTime(targetTime);
+      setTimeout(() => {
+        isRemoteAction.current = false;
+      }, 600);
+    };
+
+    // 2. Play Event (Phase 8)
+    const handlePlay = (data: any) => {
+      console.log('▶️ Remote Play Event:', data);
+      isRemoteAction.current = true;
+      setIsPlaying(true);
+
+      const targetTime = data.currentTime;
+      if (youtubeId && ytPlayerRef.current && youtubeReady.current) {
+        try {
+          if (Math.abs(ytPlayerRef.current.getCurrentTime() - targetTime) > 0.75) {
+            ytPlayerRef.current.seekTo(targetTime, true);
+          }
+          ytPlayerRef.current.playVideo();
+        } catch (e) {}
+      } else if (html5VideoRef.current) {
+        if (Math.abs(html5VideoRef.current.currentTime - targetTime) > 0.75) {
+          html5VideoRef.current.currentTime = targetTime;
+        }
+        html5VideoRef.current.play().catch(() => {});
+      }
+
+      setTimeout(() => {
+        isRemoteAction.current = false;
+      }, 500);
+    };
+
+    // 3. Pause Event (Phase 8)
+    const handlePause = (data: any) => {
+      console.log('⏸️ Remote Pause Event:', data);
+      isRemoteAction.current = true;
+      setIsPlaying(false);
+
+      if (youtubeId && ytPlayerRef.current && youtubeReady.current) {
+        try {
+          ytPlayerRef.current.pauseVideo();
+          if (data.currentTime !== undefined) {
+            ytPlayerRef.current.seekTo(data.currentTime, true);
+          }
+        } catch (e) {}
+      } else if (html5VideoRef.current) {
+        html5VideoRef.current.pause();
+        if (data.currentTime !== undefined) {
+          html5VideoRef.current.currentTime = data.currentTime;
+        }
+      }
+
+      setTimeout(() => {
+        isRemoteAction.current = false;
+      }, 500);
+    };
+
+    // 4. Seek Event (Phase 8)
+    const handleSeek = (data: any) => {
+      console.log('⏩ Remote Seek Event:', data);
+      isRemoteAction.current = true;
+      setCurrentTime(data.targetTime);
+
+      if (youtubeId && ytPlayerRef.current && youtubeReady.current) {
+        try {
+          ytPlayerRef.current.seekTo(data.targetTime, true);
+        } catch (e) {}
+      } else if (html5VideoRef.current) {
+        html5VideoRef.current.currentTime = data.targetTime;
+      }
+
+      setTimeout(() => {
+        isRemoteAction.current = false;
+      }, 500);
+    };
+
+    // 5. Change Video (Phase 7 & 8)
+    const handleChange = (data: any) => {
+      console.log('🎬 Remote Video Change:', data);
+      setVideoUrl(data.videoUrl);
+      setCurrentTime(0);
+      setIsPlaying(false);
+    };
+
+    // 6. Clock Drift Correction (Phase 10)
+    const handleHeartbeat = (data: any) => {
+      if (!data.isPlaying) return;
+
+      let localTime = 0;
+      if (youtubeId && ytPlayerRef.current && youtubeReady.current) {
+        try {
+          localTime = ytPlayerRef.current.getCurrentTime();
+        } catch (e) {}
+      } else if (html5VideoRef.current) {
+        localTime = html5VideoRef.current.currentTime;
+      }
+
+      const drift = Math.abs(localTime - data.currentTime);
+
+      // If drift is small (0.5s - 1.5s), gradually correct without hard-seeking
+      if (drift > 0.5 && drift <= 1.5) {
+        setDriftNotification(`Drift ${(drift * 1000).toFixed(0)}ms: fine-tuning`);
+        if (html5VideoRef.current) {
+          html5VideoRef.current.playbackRate = localTime < data.currentTime ? 1.05 : 0.95;
+          setTimeout(() => {
+            if (html5VideoRef.current) html5VideoRef.current.playbackRate = 1.0;
+            setDriftNotification(null);
+          }, 1500);
+        }
+      } else if (drift > 1.5) {
+        // Severe drift: hard resync
+        setDriftNotification(`Resyncing (${(drift * 1000).toFixed(0)}ms drift)...`);
+        isRemoteAction.current = true;
+        if (youtubeId && ytPlayerRef.current && youtubeReady.current) {
+          try {
+            ytPlayerRef.current.seekTo(data.currentTime, true);
+          } catch (e) {}
+        } else if (html5VideoRef.current) {
+          html5VideoRef.current.currentTime = data.currentTime;
+        }
+        setTimeout(() => {
+          isRemoteAction.current = false;
+          setDriftNotification(null);
+        }, 800);
+      }
+    };
+
+    socket.on('video:sync', handleSync);
+    socket.on('video:play', handlePlay);
+    socket.on('video:pause', handlePause);
+    socket.on('video:seek', handleSeek);
+    socket.on('video:change', handleChange);
+    socket.on('video:heartbeat', handleHeartbeat);
+
+    // Periodic Heartbeat request for drift check (Phase 10)
+    const driftInterval = setInterval(() => {
+      socket.emit('video:ping-sync');
+    }, 4000);
+
+    return () => {
+      socket.off('video:sync', handleSync);
+      socket.off('video:play', handlePlay);
+      socket.off('video:pause', handlePause);
+      socket.off('video:seek', handleSeek);
+      socket.off('video:change', handleChange);
+      socket.off('video:heartbeat', handleHeartbeat);
+      clearInterval(driftInterval);
+    };
+  }, [socket, videoUrl, youtubeId]);
+
+  // Local Controls Handlers
+  const handleTogglePlay = () => {
+    if (hostOnlyControls && !isHost) {
+      alert('Only the room host has playback controls enabled.');
+      return;
+    }
+
+    if (isPlaying) {
+      socket.emit('video:pause', { currentTime });
+    } else {
+      socket.emit('video:play', { currentTime });
+    }
+  };
+
+  const handleSeekChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (hostOnlyControls && !isHost) return;
+    const target = parseFloat(e.target.value);
+    setCurrentTime(target);
+    socket.emit('video:seek', { targetTime: target });
+  };
+
+  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = parseFloat(e.target.value);
+    setVolume(val);
+    setIsMuted(val === 0);
+
+    if (youtubeId && ytPlayerRef.current && youtubeReady.current) {
+      try {
+        ytPlayerRef.current.setVolume(val * 100);
+      } catch (e) {}
+    } else if (html5VideoRef.current) {
+      html5VideoRef.current.volume = val;
+    }
+  };
+
+  const handleToggleMute = () => {
+    const nextMuted = !isMuted;
+    setIsMuted(nextMuted);
+
+    if (youtubeId && ytPlayerRef.current && youtubeReady.current) {
+      try {
+        if (nextMuted) ytPlayerRef.current.mute();
+        else ytPlayerRef.current.unMute();
+      } catch (e) {}
+    } else if (html5VideoRef.current) {
+      html5VideoRef.current.muted = nextMuted;
+    }
+  };
+
+  const handleFullscreen = () => {
+    if (!containerRef.current) return;
+    if (!document.fullscreenElement) {
+      containerRef.current.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen().catch(() => {});
+    }
+  };
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+  };
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative w-full rounded-2xl overflow-hidden bg-black aspect-video shadow-2xl border border-white/10 flex flex-col group"
+    >
+      {/* Drift / Sync Notification Badge */}
+      {driftNotification && (
+        <div className="absolute top-4 left-4 z-40 bg-rose-600/90 text-white text-xs px-3 py-1 rounded-full shadow-lg backdrop-blur-md animate-pulse flex items-center gap-1.5">
+          <Radio className="w-3.5 h-3.5" />
+          {driftNotification}
+        </div>
+      )}
+
+      {/* Floating Reactions Overlay (Phase 13) */}
+      <ReactionsOverlay reactions={reactions} />
+
+      {/* Video Content Container */}
+      <div className="relative w-full h-full flex items-center justify-center bg-black">
+        {youtubeId ? (
+          <div id="yt-player-container" className="w-full h-full pointer-events-none" />
+        ) : (
+          <video
+            ref={html5VideoRef}
+            src={videoUrl}
+            className="w-full h-full object-contain"
+            playsInline
+            onEnded={() => setIsPlaying(false)}
+          />
+        )}
+
+        {/* Big Clickable Overlay to toggle play/pause */}
+        <div
+          onClick={handleTogglePlay}
+          className="absolute inset-0 cursor-pointer flex items-center justify-center bg-transparent group-hover:bg-black/20 transition-colors"
+        >
+          {!isPlaying && (
+            <div className="w-16 h-16 rounded-full bg-rose-600/90 text-white flex items-center justify-center shadow-2xl transform group-hover:scale-110 transition-transform">
+              <Play className="w-8 h-8 ml-1 fill-current" />
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Video Control Bar */}
+      <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent p-4 opacity-95 group-hover:opacity-100 transition-opacity z-30">
+        {/* Progress Slider */}
+        <div className="flex items-center gap-3 mb-2">
+          <span className="text-xs font-mono text-gray-300 w-10 text-right">
+            {formatTime(currentTime)}
+          </span>
+          <input
+            type="range"
+            min={0}
+            max={duration || 100}
+            step={0.1}
+            value={currentTime}
+            onChange={handleSeekChange}
+            disabled={hostOnlyControls && !isHost}
+            className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-rose-500 hover:h-2 transition-all disabled:opacity-50"
+          />
+          <span className="text-xs font-mono text-gray-400 w-10">
+            {formatTime(duration)}
+          </span>
+        </div>
+
+        {/* Action Controls Row */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleTogglePlay}
+              disabled={hostOnlyControls && !isHost}
+              className="p-2 rounded-lg bg-white/10 hover:bg-rose-600 text-white transition-colors cursor-pointer disabled:opacity-40"
+              title={isPlaying ? 'Pause (Space)' : 'Play (Space)'}
+            >
+              {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5 fill-current" />}
+            </button>
+
+            {/* Volume Control */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleToggleMute}
+                className="p-1.5 text-gray-300 hover:text-white transition-colors cursor-pointer"
+              >
+                {isMuted || volume === 0 ? (
+                  <VolumeX className="w-5 h-5 text-rose-400" />
+                ) : (
+                  <Volume2 className="w-5 h-5" />
+                )}
+              </button>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={isMuted ? 0 : volume}
+                onChange={handleVolumeChange}
+                className="w-20 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-rose-500"
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            {/* Change Video Button */}
+            <button
+              onClick={onVideoChangeRequest}
+              disabled={hostOnlyControls && !isHost}
+              className="flex items-center gap-1.5 text-xs bg-white/10 hover:bg-white/20 text-gray-200 px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer disabled:opacity-40"
+              title="Change Video Source"
+            >
+              <Settings className="w-3.5 h-3.5" />
+              <span>Change Video</span>
+            </button>
+
+            {/* Fullscreen Button */}
+            <button
+              onClick={handleFullscreen}
+              className="p-2 text-gray-300 hover:text-white transition-colors cursor-pointer"
+              title="Fullscreen"
+            >
+              <Maximize className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};

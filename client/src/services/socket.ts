@@ -4,7 +4,11 @@ let socket: Socket | null = null;
 
 export function getSocket(): Socket {
   if (!socket) {
-    const serverUrl = window.location.hostname === 'localhost' ? 'http://localhost:5000' : '/';
+    const serverUrl =
+      window.location.hostname === 'localhost'
+        ? 'http://localhost:5000'
+        : 'https://togetherplay-server.onrender.com';
+
     socket = io(serverUrl, {
       autoConnect: true,
       transports: ['websocket', 'polling'],
@@ -13,11 +17,21 @@ export function getSocket(): Socket {
     });
 
     socket.on('connect', () => {
-      console.log('⚡ Connected to TogetherPlay Real-time Socket Server:', socket?.id);
+      console.log(
+        '⚡ Connected to TogetherPlay Real-time Socket Server:',
+        socket?.id
+      );
     });
 
     socket.on('disconnect', (reason) => {
       console.warn('🔌 Disconnected from Socket Server:', reason);
+    });
+
+    socket.on('connect_error', (error) => {
+      console.error(
+        '❌ Socket connection error:',
+        error.message
+      );
     });
   }
 

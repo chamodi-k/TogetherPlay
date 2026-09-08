@@ -21,11 +21,37 @@ const server = http.createServer(app);
 
 const PORT = process.env.PORT || 5000;
 const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
+const allowedOrigins = new Set([
+  CLIENT_URL,
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+]);
+
+const isAllowedOrigin = (origin, callback) => {
+  if (!origin || allowedOrigins.has(origin)) {
+    return callback(null, true);
+  }
+
+  try {
+    const url = new URL(origin);
+    const isLocalNetwork =
+      url.protocol === 'http:' &&
+      (url.hostname === 'localhost' ||
+        url.hostname === '127.0.0.1' ||
+        /^192\.168\./.test(url.hostname) ||
+        /^10\./.test(url.hostname) ||
+        /^172\.(1[6-9]|2\d|3[0-1])\./.test(url.hostname));
+
+    return callback(null, isLocalNetwork);
+  } catch {
+    return callback(new Error('Origin not allowed'));
+  }
+};
 
 // Setup Socket.IO with CORS
 const io = new Server(server, {
   cors: {
-    origin: [CLIENT_URL, 'http://localhost:5173', 'http://127.0.0.1:5173'],
+    origin: isAllowedOrigin,
     methods: ['GET', 'POST'],
     credentials: true,
   },
@@ -34,7 +60,7 @@ const io = new Server(server, {
 // Middleware
 app.use(
   cors({
-    origin: [CLIENT_URL, 'http://localhost:5173', 'http://127.0.0.1:5173'],
+    origin: isAllowedOrigin,
     credentials: true,
   })
 );

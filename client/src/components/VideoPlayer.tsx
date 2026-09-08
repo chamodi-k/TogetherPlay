@@ -15,9 +15,23 @@ interface VideoPlayerProps {
 // Helper: Extract YouTube ID
 function extractYouTubeId(url: string): string | null {
   if (!url) return null;
-  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
-  const match = url.match(regExp);
-  return match && match[2].length === 11 ? match[2] : null;
+
+  try {
+    const parsed = new URL(url);
+    let id = parsed.searchParams.get('v');
+
+    if (parsed.hostname === 'youtu.be') {
+      id = parsed.pathname.slice(1);
+    } else if (parsed.pathname.startsWith('/embed/')) {
+      id = parsed.pathname.split('/')[2];
+    } else if (parsed.pathname.startsWith('/shorts/')) {
+      id = parsed.pathname.split('/')[2];
+    }
+
+    return id && /^[\w-]{11}$/.test(id) ? id : null;
+  } catch {
+    return null;
+  }
 }
 
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({
@@ -48,7 +62,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // Load YouTube Iframe API once
   useEffect(() => {
-    if (youtubeId && !(window as any).YT) {
+    if (
+      youtubeId &&
+      !(window as any).YT &&
+      !document.querySelector('script[src="https://www.youtube.com/iframe_api"]')
+    ) {
       const tag = document.createElement('script');
       tag.src = 'https://www.youtube.com/iframe_api';
       const firstScriptTag = document.getElementsByTagName('script')[0];
@@ -66,7 +84,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         return;
       }
 
-      ytPlayerRef.current = new (window as any).YT.Player('yt-player-container', {
+      const playerElement = containerRef.current?.querySelector('#yt-player-container');
+      if (!playerElement) return;
+
+      ytPlayerRef.current = new (window as any).YT.Player(playerElement, {
         videoId: youtubeId,
         playerVars: {
           autoplay: 0,
@@ -74,6 +95,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           disablekb: 1,
           modestbranding: 1,
           rel: 0,
+          origin: window.location.origin,
         },
         events: {
           onReady: () => {

@@ -5,9 +5,10 @@ let socket: Socket | null = null;
 export function getSocket(): Socket {
   if (!socket) {
     const serverUrl =
-      window.location.hostname === 'localhost'
-        ? 'http://localhost:5000'
-        : 'https://togetherplay-server.onrender.com';
+      import.meta.env.VITE_SOCKET_URL ||
+      (import.meta.env.DEV
+        ? `http://${window.location.hostname}:5000`
+        : 'https://togetherplay-server.onrender.com');
 
     socket = io(serverUrl, {
       autoConnect: true,

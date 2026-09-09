@@ -44,39 +44,32 @@ export const WebRTCGrid: React.FC<WebRTCGridProps> = ({ currentUser, roomCode })
   // Initialize Local Media Stream
   const initLocalMedia = async () => {
     if (!navigator.mediaDevices?.getUserMedia) {
-      setPermissionError('Camera and microphone need a secure HTTPS connection.');
+      setPermissionError('Camera is unavailable. Use HTTPS (or localhost) in a supported browser.');
       return;
     }
 
     setPermissionError(null);
-    const tracks: MediaStreamTrack[] = [];
-
+    let stream: MediaStream;
     try {
-      const videoStream = await navigator.mediaDevices.getUserMedia({
+      stream = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 480 }, height: { ideal: 360 } },
+        audio: true,
       });
-      tracks.push(...videoStream.getVideoTracks());
       setHasVideoAccess(true);
-    } catch (err: any) {
-      console.warn('Camera access not granted:', err.message);
-      setHasVideoAccess(false);
-    }
-
-    try {
-      const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      tracks.push(...audioStream.getAudioTracks());
       setHasAudioAccess(true);
     } catch (err: any) {
-      console.warn('Microphone access not granted:', err.message);
+      console.warn('Camera/microphone access not granted:', err?.message || err);
+      setHasVideoAccess(false);
       setHasAudioAccess(false);
-    }
-
-    if (tracks.length === 0) {
-      setPermissionError('Allow camera or microphone access to start the live call.');
+      const message = err?.name === 'NotAllowedError'
+        ? 'Camera permission was denied. Allow access in the browser address bar and try again.'
+        : err?.name === 'NotFoundError'
+          ? 'No camera or microphone was found on this device.'
+          : 'Camera access failed. Check browser permissions and try again.';
+      setPermissionError(message);
       return;
     }
 
-    const stream = new MediaStream(tracks);
     localStreamRef.current?.getTracks().forEach((track) => track.stop());
     localStreamRef.current = stream;
     if (localVideoRef.current) {
@@ -85,7 +78,7 @@ export const WebRTCGrid: React.FC<WebRTCGridProps> = ({ currentUser, roomCode })
 
     // Add only the newly acquired tracks to existing peer connections.
     Object.values(peerConnections.current).forEach((pc) => {
-      tracks.forEach((track) => pc.addTrack(track, stream));
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
     });
   };
 

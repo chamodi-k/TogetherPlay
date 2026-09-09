@@ -6,9 +6,10 @@ export function getSocket(): Socket {
   if (!socket) {
     const serverUrl =
       import.meta.env.VITE_SOCKET_URL ||
+      import.meta.env.VITE_SERVER_URL ||
       (import.meta.env.DEV
         ? `http://${window.location.hostname}:5000`
-        : 'https://togetherplay-server.onrender.com');
+        : window.location.origin);
 
     socket = io(serverUrl, {
       autoConnect: true,

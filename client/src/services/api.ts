@@ -2,9 +2,11 @@ import axios from 'axios';
 
 const apiBaseUrl =
   import.meta.env.VITE_API_URL ||
-  (import.meta.env.DEV
-    ? `http://${window.location.hostname}:5000/api`
-    : 'https://togetherplay-server.onrender.com/api');
+  (import.meta.env.VITE_SERVER_URL
+    ? `${import.meta.env.VITE_SERVER_URL.replace(/\/$/, '')}/api`
+    : (import.meta.env.DEV
+      ? `http://${window.location.hostname}:5000/api`
+      : `${window.location.origin}/api`));
 
 const api = axios.create({
   baseURL: apiBaseUrl,

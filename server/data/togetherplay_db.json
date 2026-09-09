@@ -15,6 +15,14 @@
       "password_hash": "$2a$10$W704IpLuEY/KodoFX/pWvOEH5/ZV0DIp71d20p7s9TVvodJUykCBu",
       "avatar": "https://api.dicebear.com/7.x/bottts/svg?seed=chamodi",
       "created_at": "2026-09-09T04:09:02.221Z"
+    },
+    {
+      "user_id": "6e73e513-2233-4540-b2b6-3c10e2996f8e",
+      "username": "chamo",
+      "email": "chamodika@gmail.com",
+      "password_hash": "$2a$10$ELgQzykVxlW3LGJTXc6S1.iiBsrn.t.w9gzJE4fajKOuRuMizFYcm",
+      "avatar": "https://api.dicebear.com/7.x/bottts/svg?seed=chamo",
+      "created_at": "2026-09-09T04:59:51.966Z"
     }
   ],
   "ROOMS": [
@@ -41,6 +49,18 @@
       "current_time": 0,
       "is_playing": 0,
       "created_at": "2026-09-09T04:09:21.785Z"
+    },
+    {
+      "room_id": "035c184d-3e20-4d96-90f2-865b0f6649d0",
+      "room_code": "6YG6BW",
+      "host_id": "6e73e513-2233-4540-b2b6-3c10e2996f8e",
+      "room_name": "Movie Night",
+      "privacy": "private",
+      "max_users": 10,
+      "current_video": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4",
+      "current_time": 0,
+      "is_playing": 0,
+      "created_at": "2026-09-09T05:00:01.998Z"
     }
   ],
   "ROOM_MEMBERS": [
@@ -57,6 +77,13 @@
       "user_id": "36baa659-80b6-4436-a591-8046e6e1803b",
       "role": "member",
       "joined_at": "2026-09-09T04:09:21.786Z"
+    },
+    {
+      "id": "ecb3c7db-634c-4b30-a8b6-8b9ff14ab3c5",
+      "room_id": "035c184d-3e20-4d96-90f2-865b0f6649d0",
+      "user_id": "6e73e513-2233-4540-b2b6-3c10e2996f8e",
+      "role": "member",
+      "joined_at": "2026-09-09T05:00:01.999Z"
     }
   ],
   "VIDEOS": [],

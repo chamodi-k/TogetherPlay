@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Play, Pause, RotateCcw, Volume2, VolumeX, Maximize, Settings, Radio } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Play, Pause, Volume2, VolumeX, Maximize, Settings, Radio, AlertCircle } from 'lucide-react';
 import { getSocket } from '../services/socket.ts';
 import { ReactionsOverlay } from './ReactionsOverlay.tsx';
 import { FloatingReaction } from '../types/index.ts';
@@ -35,6 +35,14 @@ function extractYouTubeId(url: string): string | null {
   }
 }
 
+function isDirectMediaUrl(url: string): boolean {
+  try {
+    return /\.(mp4|webm|ogg|m4v)(?:$|\/)/i.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
+}
+
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   roomCode,
   isHost,
@@ -62,14 +70,29 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   // Flags to prevent echo loops when receiving remote socket events
   const isRemoteAction = useRef<boolean>(false);
   const youtubeReady = useRef<boolean>(false);
+  const videoUrlRef = useRef<string>(initialVideoUrl || 'https://www.youtube.com/watch?v=aqz-KE-bpKQ');
+  const pendingSyncRef = useRef<{ currentTime: number; isPlaying: boolean } | null>(null);
+  const [mediaLoading, setMediaLoading] = useState<boolean>(true);
+  const [mediaError, setMediaError] = useState<string | null>(null);
 
   const youtubeId = extractYouTubeId(videoUrl);
+  const directMedia = !youtubeId && isDirectMediaUrl(videoUrl);
 
   useEffect(() => {
     if (initialVideoUrl && initialVideoUrl !== videoUrl) {
+      videoUrlRef.current = initialVideoUrl;
       setVideoUrl(initialVideoUrl);
     }
   }, [initialVideoUrl]);
+
+  useEffect(() => {
+    videoUrlRef.current = videoUrl;
+    setMediaLoading(true);
+    setMediaError(youtubeId || directMedia ? null : 'Enter a valid YouTube URL or a direct MP4/WebM URL.');
+    setIsPlaying(false);
+    setCurrentTime(0);
+    setDuration(0);
+  }, [videoUrl, youtubeId, directMedia]);
   // Load YouTube Iframe API once
   useEffect(() => {
     if (
@@ -110,6 +133,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         events: {
           onReady: () => {
             youtubeReady.current = true;
+            setMediaLoading(false);
+            setMediaError(null);
             ytPlayerRef.current.setVolume(volume * 100);
             setDuration(ytPlayerRef.current.getDuration() || 0);
           },
@@ -132,6 +157,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               const time = ytPlayerRef.current.getCurrentTime();
               socket.emit('video:pause', { currentTime: time });
             }
+          },
+          onError: () => {
+            setMediaLoading(false);
+            setMediaError('YouTube could not play this video. Check that the URL is valid and embeddable.');
           },
         },
       });
@@ -183,11 +212,22 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const handleSync = (data: any) => {
       console.log('🔄 Initial Video Sync received:', data);
       if (data.videoUrl && data.videoUrl !== videoUrl) {
+        videoUrlRef.current = data.videoUrl;
         setVideoUrl(data.videoUrl);
       }
 
       isRemoteAction.current = true;
       const targetTime = data.currentTime || 0;
+
+      if (data.videoUrl && data.videoUrl !== videoUrl) {
+        pendingSyncRef.current = { currentTime: targetTime, isPlaying: Boolean(data.isPlaying) };
+        setIsPlaying(Boolean(data.isPlaying));
+        setCurrentTime(targetTime);
+        window.setTimeout(() => {
+          isRemoteAction.current = false;
+        }, 600);
+        return;
+      }
 
       if (youtubeId && ytPlayerRef.current && youtubeReady.current) {
         try {
@@ -287,6 +327,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     // 5. Change Video (Phase 7 & 8)
     const handleChange = (data: any) => {
       console.log('🎬 Remote Video Change:', data);
+      videoUrlRef.current = data.videoUrl;
       setVideoUrl(data.videoUrl);
       setCurrentTime(0);
       setIsPlaying(false);
@@ -358,25 +399,107 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, [socket, videoUrl, youtubeId]);
 
+  useEffect(() => {
+    if (youtubeId || !html5VideoRef.current || !directMedia) return;
+
+    const element = html5VideoRef.current;
+    const handleLoaded = () => {
+      setMediaLoading(false);
+      setMediaError(null);
+      setDuration(Number.isFinite(element.duration) ? element.duration : 0);
+    };
+    const handleError = () => {
+      setMediaLoading(false);
+      setMediaError('This direct video URL could not be loaded. Use a public MP4 or WebM URL.');
+    };
+
+    element.addEventListener('loadedmetadata', handleLoaded);
+    element.addEventListener('canplay', handleLoaded);
+    element.addEventListener('error', handleError);
+    element.load();
+
+    return () => {
+      element.pause();
+      element.removeEventListener('loadedmetadata', handleLoaded);
+      element.removeEventListener('canplay', handleLoaded);
+      element.removeEventListener('error', handleError);
+    };
+  }, [videoUrl, youtubeId, directMedia]);
+
+  // Apply a queued initial sync after a newly selected source is ready.
+  useEffect(() => {
+    if (!pendingSyncRef.current || mediaLoading || mediaError) return;
+    const pending = pendingSyncRef.current;
+    pendingSyncRef.current = null;
+    isRemoteAction.current = true;
+    const target = pending.currentTime;
+    if (youtubeId && ytPlayerRef.current && youtubeReady.current) {
+      ytPlayerRef.current.seekTo(target, true);
+      pending.isPlaying ? ytPlayerRef.current.playVideo() : ytPlayerRef.current.pauseVideo();
+    } else if (html5VideoRef.current) {
+      html5VideoRef.current.currentTime = target;
+      if (pending.isPlaying) html5VideoRef.current.play().catch(() => {
+        setMediaError('Playback was blocked. Press play to start the video.');
+      });
+      else html5VideoRef.current.pause();
+    }
+    setCurrentTime(target);
+    setIsPlaying(pending.isPlaying);
+    window.setTimeout(() => {
+      isRemoteAction.current = false;
+    }, 600);
+  }, [mediaLoading, mediaError, youtubeId]);
+
   // Local Controls Handlers
+  const applyLocalPlayback = (playing: boolean, time = currentTime) => {
+    isRemoteAction.current = true;
+    if (youtubeId && ytPlayerRef.current && youtubeReady.current) {
+      if (Math.abs(ytPlayerRef.current.getCurrentTime() - time) > 0.75) {
+        ytPlayerRef.current.seekTo(time, true);
+      }
+      if (playing) ytPlayerRef.current.playVideo();
+      else ytPlayerRef.current.pauseVideo();
+    } else if (html5VideoRef.current) {
+      html5VideoRef.current.currentTime = time;
+      if (playing) {
+        html5VideoRef.current.play().catch(() => {
+          setMediaError('Playback was blocked. Press play to start the video.');
+        });
+      } else {
+        html5VideoRef.current.pause();
+      }
+    }
+    setIsPlaying(playing);
+    setCurrentTime(time);
+    window.setTimeout(() => {
+      isRemoteAction.current = false;
+    }, 500);
+  };
+
   const handleTogglePlay = () => {
     if (hostOnlyControls && !isHost) {
       alert('Only the room host has playback controls enabled.');
       return;
     }
 
-    if (isPlaying) {
-      socket.emit('video:pause', { currentTime });
-    } else {
-      socket.emit('video:play', { currentTime });
-    }
+    applyLocalPlayback(!isPlaying);
+    socket.emit(isPlaying ? 'video:pause' : 'video:play', { currentTime });
   };
 
   const handleSeekChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (hostOnlyControls && !isHost) return;
     const target = parseFloat(e.target.value);
     setCurrentTime(target);
+    isRemoteAction.current = true;
+    if (youtubeId && ytPlayerRef.current && youtubeReady.current) {
+      ytPlayerRef.current.seekTo(target, true);
+    } else if (html5VideoRef.current) {
+      html5VideoRef.current.currentTime = target;
+    }
     socket.emit('video:seek', { targetTime: target });
+    window.setTimeout(() => {
+      isRemoteAction.current = false;
+    }, 400);
   };
 
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -449,11 +572,31 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         ) : (
           <video
             ref={html5VideoRef}
-            src={videoUrl}
+            src={directMedia ? videoUrl : undefined}
             className="w-full h-full object-contain"
             playsInline
+            onLoadedMetadata={() => {
+              setMediaLoading(false);
+              setMediaError(null);
+            }}
+            onError={() => {
+              setMediaLoading(false);
+              setMediaError('This direct video URL could not be loaded. Use a public MP4 or WebM URL.');
+            }}
             onEnded={() => setIsPlaying(false)}
           />
+        )}
+
+        {mediaLoading && !mediaError && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/40 text-white text-sm">
+            Loading video...
+          </div>
+        )}
+        {mediaError && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-6 text-center bg-black/75 text-rose-200 text-sm">
+            <AlertCircle className="w-7 h-7 text-rose-400" />
+            <span>{mediaError}</span>
+          </div>
         )}
 
         {/* Big Clickable Overlay to toggle play/pause */}

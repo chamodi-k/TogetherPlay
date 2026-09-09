@@ -255,6 +255,7 @@ export const RoomPage: React.FC = () => {
             hostOnlyControls={hostOnlyControls}
             reactions={reactions}
             onVideoChangeRequest={() => setShowVideoModal(true)}
+            initialVideoUrl={room?.current_video}
           />
 
           {/* WebRTC Video Call Grid */}

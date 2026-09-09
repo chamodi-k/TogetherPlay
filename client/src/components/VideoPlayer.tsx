@@ -9,6 +9,7 @@ interface VideoPlayerProps {
   isHost: boolean;
   hostOnlyControls: boolean;
   reactions: FloatingReaction[];
+  initialVideoUrl?: string;
   onVideoChangeRequest: () => void;
 }
 
@@ -17,7 +18,7 @@ function extractYouTubeId(url: string): string | null {
   if (!url) return null;
 
   try {
-    const parsed = new URL(url);
+    const parsed = new URL(url.match(/^https?:\/\//i) ? url : `https://${url}`);
     let id = parsed.searchParams.get('v');
 
     if (parsed.hostname === 'youtu.be') {
@@ -39,6 +40,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   isHost,
   hostOnlyControls,
   reactions,
+  initialVideoUrl,
   onVideoChangeRequest,
 }) => {
   const socket = getSocket();
@@ -47,7 +49,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const html5VideoRef = useRef<HTMLVideoElement>(null);
   const ytPlayerRef = useRef<any>(null);
 
-  const [videoUrl, setVideoUrl] = useState<string>('https://www.youtube.com/watch?v=aqz-KE-bpKQ');
+  const [videoUrl, setVideoUrl] = useState<string>(
+    initialVideoUrl || 'https://www.youtube.com/watch?v=aqz-KE-bpKQ'
+  );
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [duration, setDuration] = useState<number>(0);
@@ -61,6 +65,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const youtubeId = extractYouTubeId(videoUrl);
 
+  useEffect(() => {
+    if (initialVideoUrl && initialVideoUrl !== videoUrl) {
+      setVideoUrl(initialVideoUrl);
+    }
+  }, [initialVideoUrl]);
   // Load YouTube Iframe API once
   useEffect(() => {
     if (

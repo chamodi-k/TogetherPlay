@@ -233,7 +233,11 @@ export const WebRTCGrid: React.FC<WebRTCGridProps> = ({ currentUser, roomCode })
   };
 
   const toggleVideo = () => {
-    if (!localStreamRef.current) return;
+    if (!localStreamRef.current) {
+      void initLocalMedia();
+      return;
+    }
+
     const videoTrack = localStreamRef.current.getVideoTracks()[0];
     if (videoTrack) {
       videoTrack.enabled = !videoTrack.enabled;
@@ -273,14 +277,24 @@ export const WebRTCGrid: React.FC<WebRTCGridProps> = ({ currentUser, roomCode })
           {/* Video Toggle */}
           <button
             onClick={toggleVideo}
-            title={isVideoOff ? 'Turn Video On' : 'Turn Video Off'}
+            title={
+              !hasMediaAccess
+                ? 'Allow Camera'
+                : isVideoOff
+                  ? 'Turn Video On'
+                  : 'Turn Video Off'
+            }
             className={`p-2 rounded-lg transition-colors cursor-pointer ${
-              isVideoOff
+              isVideoOff || !hasMediaAccess
                 ? 'bg-rose-600/80 text-white hover:bg-rose-600'
                 : 'bg-white/10 hover:bg-white/20 text-emerald-400'
             }`}
           >
-            {isVideoOff ? <VideoOff className="w-4 h-4" /> : <Video className="w-4 h-4" />}
+            {isVideoOff || !hasMediaAccess ? (
+              <VideoOff className="w-4 h-4" />
+            ) : (
+              <Video className="w-4 h-4" />
+            )}
           </button>
         </div>
       </div>
@@ -292,7 +306,7 @@ export const WebRTCGrid: React.FC<WebRTCGridProps> = ({ currentUser, roomCode })
             onClick={initLocalMedia}
             className="text-xs text-white underline ml-2 cursor-pointer"
           >
-            Allow
+            Allow Camera
           </button>
         </div>
       )}

@@ -23,6 +23,14 @@
       "password_hash": "$2a$10$ELgQzykVxlW3LGJTXc6S1.iiBsrn.t.w9gzJE4fajKOuRuMizFYcm",
       "avatar": "https://api.dicebear.com/7.x/bottts/svg?seed=chamo",
       "created_at": "2026-09-09T04:59:51.966Z"
+    },
+    {
+      "user_id": "b487afea-ef31-4bd6-8ea5-e46ca82b8f9b",
+      "username": "chamal",
+      "email": "chamal@gmail.com",
+      "password_hash": "$2a$10$t5gHDPzfX/7i3tLBXrp89OUV6eyyaO4YYzLKAV/wh9aSGFYyv6b.6",
+      "avatar": "https://api.dicebear.com/7.x/bottts/svg?seed=chamal",
+      "created_at": "2026-09-09T15:34:35.979Z"
     }
   ],
   "ROOMS": [
@@ -61,6 +69,30 @@
       "current_time": 0,
       "is_playing": 0,
       "created_at": "2026-09-09T05:00:01.998Z"
+    },
+    {
+      "room_id": "198e6317-73b6-4a02-94ca-6a1a406175e6",
+      "room_code": "TMNAUL",
+      "host_id": "6e73e513-2233-4540-b2b6-3c10e2996f8e",
+      "room_name": "Movie Night",
+      "privacy": "private",
+      "max_users": 10,
+      "current_video": "https://www.youtube.com/watch?v=aqz-KE-bpKQ",
+      "current_time": 0,
+      "is_playing": 0,
+      "created_at": "2026-09-09T05:03:31.144Z"
+    },
+    {
+      "room_id": "8b53ddba-a977-41f8-9bcd-4d9b64719d41",
+      "room_code": "4L9RZP",
+      "host_id": "b487afea-ef31-4bd6-8ea5-e46ca82b8f9b",
+      "room_name": "Movie Night",
+      "privacy": "private",
+      "max_users": 10,
+      "current_video": "https://youtu.be/x0uPUr34PiU?si=JehtKDATYiYukOKT",
+      "current_time": 0,
+      "is_playing": 0,
+      "created_at": "2026-09-09T15:37:23.047Z"
     }
   ],
   "ROOM_MEMBERS": [
@@ -84,6 +116,20 @@
       "user_id": "6e73e513-2233-4540-b2b6-3c10e2996f8e",
       "role": "member",
       "joined_at": "2026-09-09T05:00:01.999Z"
+    },
+    {
+      "id": "00fab335-77eb-43b8-b32b-054fcd22f214",
+      "room_id": "198e6317-73b6-4a02-94ca-6a1a406175e6",
+      "user_id": "6e73e513-2233-4540-b2b6-3c10e2996f8e",
+      "role": "member",
+      "joined_at": "2026-09-09T05:03:31.145Z"
+    },
+    {
+      "id": "3b7607d0-93b6-4795-9aa7-39245c706230",
+      "room_id": "8b53ddba-a977-41f8-9bcd-4d9b64719d41",
+      "user_id": "b487afea-ef31-4bd6-8ea5-e46ca82b8f9b",
+      "role": "member",
+      "joined_at": "2026-09-09T15:37:23.048Z"
     }
   ],
   "VIDEOS": [],
@@ -94,6 +140,13 @@
       "user_id": "36baa659-80b6-4436-a591-8046e6e1803b",
       "content": "hi",
       "created_at": "2026-09-09T04:14:16.202Z"
+    },
+    {
+      "message_id": "1e9d320a-1406-4a20-88ee-541b79d57a25",
+      "room_id": "8b53ddba-a977-41f8-9bcd-4d9b64719d41",
+      "user_id": "b487afea-ef31-4bd6-8ea5-e46ca82b8f9b",
+      "content": "hi",
+      "created_at": "2026-09-09T15:37:45.296Z"
     }
   ],
   "WATCH_HISTORY": []

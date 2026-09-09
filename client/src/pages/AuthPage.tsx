@@ -26,22 +26,26 @@ export const AuthPage: React.FC = () => {
     try {
       if (mode === 'login') {
         const res = await authApi.login({
-          identifier: username || email,
+          identifier: (username || email).trim(),
           password,
         });
         login(res.data.token, res.data.user);
         navigate(`/${redirect}`);
       } else {
         const res = await authApi.register({
-          username,
-          email,
+          username: username.trim(),
+          email: email.trim().toLowerCase(),
           password,
         });
         login(res.data.token, res.data.user);
         navigate(`/${redirect}`);
       }
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Authentication failed. Please check your credentials.');
+      const serverError = err.response?.data?.error;
+      const networkError = !err.response &&
+        'Unable to reach the server. Check that the TogetherPlay backend is running and that VITE_SERVER_URL is configured for this deployment.';
+
+      setError(serverError || networkError || 'Authentication failed. Please check your credentials.');
     } finally {
       setLoading(false);
     }

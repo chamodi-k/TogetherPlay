@@ -5,11 +5,9 @@ let socket: Socket | null = null;
 export function getSocket(): Socket {
   if (!socket) {
     const serverUrl =
-      import.meta.env.VITE_SOCKET_URL ||
-      import.meta.env.VITE_SERVER_URL ||
-      (import.meta.env.DEV
+      import.meta.env.DEV
         ? `http://${window.location.hostname}:5000`
-        : window.location.origin);
+        : 'https://togetherplay-server.onrender.com';
 
     socket = io(serverUrl, {
       autoConnect: true,
@@ -26,7 +24,10 @@ export function getSocket(): Socket {
     });
 
     socket.on('disconnect', (reason) => {
-      console.warn('🔌 Disconnected from Socket Server:', reason);
+      console.warn(
+        '🔌 Disconnected from Socket Server:',
+        reason
+      );
     });
 
     socket.on('connect_error', (error) => {

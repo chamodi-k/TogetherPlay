@@ -90,11 +90,19 @@ export function registerSocketHandlers(io) {
         joinedUser: currentUser,
       });
 
-      // Notify WebRTC mesh peers that a new peer has joined
+      // Notify existing peers and the new peer so both sides can establish a mesh.
       socket.to(currentRoomCode).emit('webrtc:peer-joined', {
         socketId: socket.id,
         user: currentUser,
       });
+      for (const [peerSocketId, peerUser] of state.users) {
+        if (peerSocketId !== socket.id) {
+          socket.emit('webrtc:peer-existing', {
+            socketId: peerSocketId,
+            user: peerUser,
+          });
+        }
+      }
 
       console.log(`[Socket] User ${currentUser.username} (${socket.id}) joined room ${currentRoomCode}`);
     });
@@ -299,22 +307,27 @@ export function registerSocketHandlers(io) {
     // 11. Disconnect / Leave
     const handleLeave = () => {
       if (!currentRoomCode) return;
-      const state = getRoomState(currentRoomCode);
+      const roomCodeAtLeave = currentRoomCode;
+      const usernameAtLeave = currentUser?.username || socket.id;
+      const state = getRoomState(roomCodeAtLeave);
       state.users.delete(socket.id);
 
       const userList = Array.from(state.users.values());
-      io.to(currentRoomCode).emit('room:presence', {
+      io.to(roomCodeAtLeave).emit('room:presence', {
         users: userList,
         count: userList.length,
         hostId: state.hostId,
         leftUser: currentUser,
       });
 
-      socket.to(currentRoomCode).emit('webrtc:peer-left', {
+      socket.to(roomCodeAtLeave).emit('webrtc:peer-left', {
         socketId: socket.id,
       });
 
-      console.log(`[Socket] User ${currentUser?.username || socket.id} left room ${currentRoomCode}`);
+      socket.leave(roomCodeAtLeave);
+      currentRoomCode = null;
+      currentUser = null;
+      console.log(`[Socket] User ${usernameAtLeave} left room ${roomCodeAtLeave}`);
     };
 
     socket.on('room:leave', handleLeave);

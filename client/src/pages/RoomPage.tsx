@@ -62,10 +62,6 @@ export const RoomPage: React.FC = () => {
             setMessages(msgRes.data.messages || []);
           } catch (e) {}
 
-          // Join immediately when connected; otherwise the connect handler joins once.
-          if (socket.connected) {
-            socket.emit('room:join', { roomCode, user });
-          }
         }
       } catch (err: any) {
         if (isSubscribed) {
@@ -114,28 +110,38 @@ export const RoomPage: React.FC = () => {
       alert(data.message);
     };
 
-    const handleSocketConnect = () => {
-      socket.emit('room:join', { roomCode, user });
-    };
-
     socket.on('room:presence', handlePresence);
     socket.on('chat:message', handleChatMessage);
     socket.on('reaction:receive', handleReaction);
     socket.on('room:host-only-updated', handleHostOnlyUpdated);
     socket.on('room:error', handleRoomError);
-    socket.on('connect', handleSocketConnect);
 
     return () => {
       isSubscribed = false;
-      socket.emit('room:leave');
+      if (socket.connected) socket.emit('room:leave');
       socket.off('room:presence', handlePresence);
       socket.off('chat:message', handleChatMessage);
       socket.off('reaction:receive', handleReaction);
       socket.off('room:host-only-updated', handleHostOnlyUpdated);
       socket.off('room:error', handleRoomError);
-      socket.off('connect', handleSocketConnect);
     };
   }, [roomCode, user, socket]);
+
+  // Join only after child components have mounted their sync and WebRTC listeners.
+  useEffect(() => {
+    if (!room || !user || !roomCode) return;
+
+    const joinRoom = () => {
+      socket.emit('room:join', { roomCode, user });
+    };
+
+    if (socket.connected) joinRoom();
+    socket.on('connect', joinRoom);
+
+    return () => {
+      socket.off('connect', joinRoom);
+    };
+  }, [room, roomCode, user, socket]);
 
   // Send Reaction
   const handleSendReaction = (emoji: string) => {

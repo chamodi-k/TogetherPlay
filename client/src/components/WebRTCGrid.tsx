@@ -34,12 +34,23 @@ export const WebRTCGrid: React.FC<WebRTCGridProps> = ({ currentUser, roomCode })
 
   const [peers, setPeers] = useState<RemoteStreamMap>({});
   const peerConnections = useRef<PeerConnectionMap>({});
+  const pendingCandidates = useRef<Record<string, RTCIceCandidateInit[]>>({});
+  const remoteMediaState = useRef<Record<string, { isMuted: boolean; isVideoOff: boolean }>>({});
 
   const [isAudioMuted, setIsAudioMuted] = useState<boolean>(false);
   const [isVideoOff, setIsVideoOff] = useState<boolean>(false);
   const [hasAudioAccess, setHasAudioAccess] = useState<boolean>(false);
   const [hasVideoAccess, setHasVideoAccess] = useState<boolean>(false);
   const [permissionError, setPermissionError] = useState<string | null>(null);
+
+  const reportMediaState = (muted: boolean, videoOff: boolean) => {
+    if (socket.connected) {
+      socket.emit('webrtc:media-state', {
+        isMuted: muted,
+        isVideoOff: videoOff,
+      });
+    }
+  };
 
   // Initialize Local Media Stream
   const initLocalMedia = async () => {
@@ -51,12 +62,38 @@ export const WebRTCGrid: React.FC<WebRTCGridProps> = ({ currentUser, roomCode })
     setPermissionError(null);
     let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 480 }, height: { ideal: 360 } },
-        audio: true,
-      });
-      setHasVideoAccess(true);
-      setHasAudioAccess(true);
+      const tracks: MediaStreamTrack[] = [];
+      let videoGranted = false;
+      let audioGranted = false;
+
+      try {
+        const videoStream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 480 }, height: { ideal: 360 } },
+        });
+        tracks.push(...videoStream.getVideoTracks());
+        videoGranted = true;
+      } catch (err) {
+        console.warn('Camera access not granted:', err);
+      }
+
+      try {
+        const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        tracks.push(...audioStream.getAudioTracks());
+        audioGranted = true;
+      } catch (err) {
+        console.warn('Microphone access not granted:', err);
+      }
+
+      if (!tracks.length) {
+        throw new DOMException('No media device permission', 'NotAllowedError');
+      }
+
+      stream = new MediaStream(tracks);
+      setHasVideoAccess(videoGranted);
+      setHasAudioAccess(audioGranted);
+      setIsVideoOff(!videoGranted);
+      setIsAudioMuted(!audioGranted);
+      reportMediaState(!audioGranted, !videoGranted);
     } catch (err: any) {
       console.warn('Camera/microphone access not granted:', err?.message || err);
       setHasVideoAccess(false);
@@ -67,6 +104,7 @@ export const WebRTCGrid: React.FC<WebRTCGridProps> = ({ currentUser, roomCode })
           ? 'No camera or microphone was found on this device.'
           : 'Camera access failed. Check browser permissions and try again.';
       setPermissionError(message);
+      reportMediaState(true, true);
       return;
     }
 
@@ -76,16 +114,39 @@ export const WebRTCGrid: React.FC<WebRTCGridProps> = ({ currentUser, roomCode })
       localVideoRef.current.srcObject = stream;
     }
 
-    // Add only the newly acquired tracks to existing peer connections.
-    Object.values(peerConnections.current).forEach((pc) => {
-      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+    // Replace existing senders where possible, then renegotiate newly added tracks.
+    Object.entries(peerConnections.current).forEach(async ([targetSocketId, pc]) => {
+      let needsNegotiation = false;
+      stream.getTracks().forEach((track) => {
+        const sender = pc.getSenders().find((item) => item.track?.kind === track.kind);
+        if (sender) sender.replaceTrack(track).catch(() => {});
+        else {
+          pc.addTrack(track, stream);
+          needsNegotiation = true;
+        }
+      });
+      if (needsNegotiation && pc.signalingState === 'stable') {
+        try {
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          socket.emit('webrtc:offer', { toSocketId: targetSocketId, offer });
+        } catch (err) {
+          console.error('Error renegotiating media:', err);
+        }
+      }
     });
   };
 
   useEffect(() => {
     initLocalMedia();
 
+    const reportCurrentMediaState = () => {
+      reportMediaState(isAudioMuted, isVideoOff || !hasVideoAccess);
+    };
+    socket.on('connect', reportCurrentMediaState);
+
     return () => {
+      socket.off('connect', reportCurrentMediaState);
       // Clean up local tracks
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((track) => track.stop());
@@ -130,7 +191,7 @@ export const WebRTCGrid: React.FC<WebRTCGridProps> = ({ currentUser, roomCode })
           ...prev,
           [targetSocketId]: {
             stream: remoteStream,
-            user: remoteUser,
+            user: { ...remoteUser, ...remoteMediaState.current[targetSocketId] },
           },
         }));
       };
@@ -142,6 +203,17 @@ export const WebRTCGrid: React.FC<WebRTCGridProps> = ({ currentUser, roomCode })
       };
 
       return pc;
+    };
+
+    const negotiate = async (targetSocketId: string, pc: RTCPeerConnection) => {
+      if (pc.signalingState !== 'stable') return;
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.emit('webrtc:offer', { toSocketId: targetSocketId, offer });
+      } catch (err) {
+        console.error('Error creating WebRTC offer:', err);
+      }
     };
 
     const handlePeerDisconnect = (socketId: string) => {
@@ -156,21 +228,16 @@ export const WebRTCGrid: React.FC<WebRTCGridProps> = ({ currentUser, roomCode })
       });
     };
 
-    // When a new peer joins the room, send an offer to them
+    // Existing peers are announced for the new client, which owns offer creation.
+    const handlePeerExisting = async ({ socketId, user }: { socketId: string; user: User }) => {
+      const pc = createPeerConnection(socketId, user);
+      await negotiate(socketId, pc);
+    };
+
+    // Keep the connection ready for an offer from an existing peer.
     const handlePeerJoined = async ({ socketId, user }: { socketId: string; user: User }) => {
       console.log(`[WebRTC] Peer joined: ${user.username} (${socketId})`);
-      const pc = createPeerConnection(socketId, user);
-
-      try {
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        socket.emit('webrtc:offer', {
-          toSocketId: socketId,
-          offer,
-        });
-      } catch (err) {
-        console.error('Error creating WebRTC offer:', err);
-      }
+      createPeerConnection(socketId, user);
     };
 
     // When receiving an offer from another peer, respond with an answer
@@ -180,6 +247,9 @@ export const WebRTCGrid: React.FC<WebRTCGridProps> = ({ currentUser, roomCode })
 
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(offer));
+        const queued = pendingCandidates.current[fromSocketId] || [];
+        for (const candidate of queued) await pc.addIceCandidate(candidate);
+        delete pendingCandidates.current[fromSocketId];
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
 
@@ -198,6 +268,9 @@ export const WebRTCGrid: React.FC<WebRTCGridProps> = ({ currentUser, roomCode })
       if (pc) {
         try {
           await pc.setRemoteDescription(new RTCSessionDescription(answer));
+          const queued = pendingCandidates.current[fromSocketId] || [];
+          for (const candidate of queued) await pc.addIceCandidate(candidate);
+          delete pendingCandidates.current[fromSocketId];
         } catch (err) {
           console.error('Error setting remote description for answer:', err);
         }
@@ -207,31 +280,48 @@ export const WebRTCGrid: React.FC<WebRTCGridProps> = ({ currentUser, roomCode })
     // When receiving ICE candidate
     const handleIceCandidate = async ({ fromSocketId, candidate }: any) => {
       const pc = peerConnections.current[fromSocketId];
-      if (pc && candidate) {
+      if (pc && candidate && pc.remoteDescription) {
         try {
           await pc.addIceCandidate(new RTCIceCandidate(candidate));
         } catch (err) {
           console.error('Error adding ICE candidate:', err);
         }
+      } else if (candidate) {
+        pendingCandidates.current[fromSocketId] ||= [];
+        pendingCandidates.current[fromSocketId].push(candidate);
       }
+    };
+
+    const handlePeerMediaChanged = ({ socketId, isMuted, isVideoOff }: { socketId: string; isMuted: boolean; isVideoOff: boolean }) => {
+      remoteMediaState.current[socketId] = { isMuted, isVideoOff };
+      setPeers((prev) => {
+        const peer = prev[socketId];
+        return peer
+          ? { ...prev, [socketId]: { ...peer, user: { ...peer.user, isMuted, isVideoOff } } }
+          : prev;
+      });
     };
 
     const handlePeerLeft = ({ socketId }: { socketId: string }) => {
       handlePeerDisconnect(socketId);
     };
 
+    socket.on('webrtc:peer-existing', handlePeerExisting);
     socket.on('webrtc:peer-joined', handlePeerJoined);
     socket.on('webrtc:offer', handleOffer);
     socket.on('webrtc:answer', handleAnswer);
     socket.on('webrtc:ice-candidate', handleIceCandidate);
     socket.on('webrtc:peer-left', handlePeerLeft);
+    socket.on('webrtc:peer-media-changed', handlePeerMediaChanged);
 
     return () => {
+      socket.off('webrtc:peer-existing', handlePeerExisting);
       socket.off('webrtc:peer-joined', handlePeerJoined);
       socket.off('webrtc:offer', handleOffer);
       socket.off('webrtc:answer', handleAnswer);
       socket.off('webrtc:ice-candidate', handleIceCandidate);
       socket.off('webrtc:peer-left', handlePeerLeft);
+      socket.off('webrtc:peer-media-changed', handlePeerMediaChanged);
     };
   }, [socket]);
 
@@ -392,9 +482,25 @@ const RemoteVideoTile: React.FC<{ stream: MediaStream; user: User }> = ({ stream
 
   return (
     <div className="relative rounded-xl overflow-hidden aspect-video bg-dark-800 border border-white/10 flex items-center justify-center shadow-md">
-      <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        className={`w-full h-full object-cover ${user.isVideoOff ? 'hidden' : 'block'}`}
+      />
+      {user.isVideoOff && (
+        <div className="flex flex-col items-center justify-center p-2">
+          <img
+            src={user.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${user.username}`}
+            alt={user.username}
+            className="w-10 h-10 rounded-full border border-rose-500/40 mb-1"
+          />
+          <span className="text-[11px] text-gray-400">Camera Off</span>
+        </div>
+      )}
       <div className="absolute bottom-1.5 left-1.5 flex items-center gap-1 bg-black/60 backdrop-blur-md px-2 py-0.5 rounded-md text-[10px] text-white">
         <span>{user.username}</span>
+        {user.isMuted && <MicOff className="w-3 h-3 text-rose-400" />}
       </div>
     </div>
   );

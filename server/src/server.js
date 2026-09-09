@@ -26,6 +26,7 @@ const configuredClientUrls = (process.env.CLIENT_URL || '')
   .filter(Boolean);
 const allowedOrigins = new Set([
   ...configuredClientUrls,
+  'https://chamo12.netlify.app',
   'http://localhost:5173',
   'http://127.0.0.1:5173',
 ]);

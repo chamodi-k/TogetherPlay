@@ -23,6 +23,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const socket = getSocket();
   const [inputText, setInputText] = useState('');
   const [activeTab, setActiveTab] = useState<'chat' | 'users'>('chat');
+  const [sendError, setSendError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Auto scroll to bottom
@@ -36,9 +37,27 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     e.preventDefault();
     if (!inputText.trim()) return;
 
+    if (!socket.connected) {
+      setSendError('Reconnecting to the room...');
+      socket.connect();
+      return;
+    }
+
     socket.emit('chat:send', { content: inputText.trim() });
     setInputText('');
+    setSendError(null);
   };
+
+  useEffect(() => {
+    const handleChatError = (data: { message: string }) => {
+      setSendError(data.message);
+    };
+
+    socket.on('chat:error', handleChatError);
+    return () => {
+      socket.off('chat:error', handleChatError);
+    };
+  }, [socket]);
 
   const formatMessageTime = (isoString?: string) => {
     if (!isoString) return '';
@@ -139,6 +158,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
           {/* Chat Input Form */}
           <form onSubmit={handleSendMessage} className="p-3 border-t border-white/10 bg-dark-800/80">
+            {sendError && <p className="text-[10px] text-amber-400 mb-2">{sendError}</p>}
             <div className="flex items-center gap-2">
               <input
                 type="text"

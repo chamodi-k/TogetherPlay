@@ -62,11 +62,10 @@ export const RoomPage: React.FC = () => {
             setMessages(msgRes.data.messages || []);
           } catch (e) {}
 
-          // Join Socket Room
-          socket.emit('room:join', {
-            roomCode,
-            user,
-          });
+          // Join immediately when connected; otherwise the connect handler joins once.
+          if (socket.connected) {
+            socket.emit('room:join', { roomCode, user });
+          }
         }
       } catch (err: any) {
         if (isSubscribed) {
@@ -115,11 +114,16 @@ export const RoomPage: React.FC = () => {
       alert(data.message);
     };
 
+    const handleSocketConnect = () => {
+      socket.emit('room:join', { roomCode, user });
+    };
+
     socket.on('room:presence', handlePresence);
     socket.on('chat:message', handleChatMessage);
     socket.on('reaction:receive', handleReaction);
     socket.on('room:host-only-updated', handleHostOnlyUpdated);
     socket.on('room:error', handleRoomError);
+    socket.on('connect', handleSocketConnect);
 
     return () => {
       isSubscribed = false;
@@ -129,6 +133,7 @@ export const RoomPage: React.FC = () => {
       socket.off('reaction:receive', handleReaction);
       socket.off('room:host-only-updated', handleHostOnlyUpdated);
       socket.off('room:error', handleRoomError);
+      socket.off('connect', handleSocketConnect);
     };
   }, [roomCode, user, socket]);
 

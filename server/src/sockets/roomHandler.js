@@ -36,7 +36,14 @@ export function registerSocketHandlers(io) {
     // 1. Join Room
     socket.on('room:join', async ({ roomCode, user }) => {
       if (!roomCode || !user) return;
-      currentRoomCode = roomCode.toUpperCase();
+      const normalizedRoomCode = roomCode.trim().toUpperCase();
+      const existingState = roomStates.get(normalizedRoomCode);
+
+      if (currentRoomCode === normalizedRoomCode && existingState?.users.has(socket.id)) {
+        return;
+      }
+
+      currentRoomCode = normalizedRoomCode;
       currentUser = {
         ...user,
         socketId: socket.id,
@@ -44,9 +51,9 @@ export function registerSocketHandlers(io) {
         isVideoOff: false,
       };
 
-      socket.join(currentRoomCode);
-
       const state = getRoomState(currentRoomCode);
+      socket.join(currentRoomCode);
+      state.users.set(socket.id, currentUser);
 
       // Check DB to see if this user is host or room's hostId
       try {
@@ -62,8 +69,6 @@ export function registerSocketHandlers(io) {
       } catch (err) {
         console.error('Error fetching room DB info on socket join:', err.message);
       }
-
-      state.users.set(socket.id, currentUser);
 
       // Send initial synchronization state to late-joiner (Phase 9)
       const currentCalculatedTime = calculateCurrentTime(state);
@@ -208,7 +213,13 @@ export function registerSocketHandlers(io) {
 
     // 8. Live Chat Message (Phase 12)
     socket.on('chat:send', async ({ content }) => {
-      if (!currentRoomCode || !currentUser || !content?.trim()) return;
+      if (!currentRoomCode || !currentUser) {
+        return socket.emit('chat:error', { message: 'You are not connected to a room yet.' });
+      }
+
+      if (!content?.trim()) {
+        return socket.emit('chat:error', { message: 'Message cannot be empty.' });
+      }
 
       const messageId = uuidv4();
       const messageData = {

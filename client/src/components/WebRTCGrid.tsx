@@ -37,32 +37,56 @@ export const WebRTCGrid: React.FC<WebRTCGridProps> = ({ currentUser, roomCode })
 
   const [isAudioMuted, setIsAudioMuted] = useState<boolean>(false);
   const [isVideoOff, setIsVideoOff] = useState<boolean>(false);
-  const [hasMediaAccess, setHasMediaAccess] = useState<boolean>(false);
+  const [hasAudioAccess, setHasAudioAccess] = useState<boolean>(false);
+  const [hasVideoAccess, setHasVideoAccess] = useState<boolean>(false);
   const [permissionError, setPermissionError] = useState<string | null>(null);
 
   // Initialize Local Media Stream
   const initLocalMedia = async () => {
-    try {
-      setPermissionError(null);
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 480 }, height: { ideal: 360 } },
-        audio: true,
-      });
-
-      localStreamRef.current = stream;
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-      }
-      setHasMediaAccess(true);
-
-      // Add local tracks to existing peer connections
-      Object.values(peerConnections.current).forEach((pc) => {
-        stream.getTracks().forEach((track) => pc.addTrack(track, stream));
-      });
-    } catch (err: any) {
-      console.warn('Camera/Mic access not granted:', err.message);
-      setPermissionError('Camera/Mic permission needed for live video call');
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setPermissionError('Camera and microphone need a secure HTTPS connection.');
+      return;
     }
+
+    setPermissionError(null);
+    const tracks: MediaStreamTrack[] = [];
+
+    try {
+      const videoStream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 480 }, height: { ideal: 360 } },
+      });
+      tracks.push(...videoStream.getVideoTracks());
+      setHasVideoAccess(true);
+    } catch (err: any) {
+      console.warn('Camera access not granted:', err.message);
+      setHasVideoAccess(false);
+    }
+
+    try {
+      const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      tracks.push(...audioStream.getAudioTracks());
+      setHasAudioAccess(true);
+    } catch (err: any) {
+      console.warn('Microphone access not granted:', err.message);
+      setHasAudioAccess(false);
+    }
+
+    if (tracks.length === 0) {
+      setPermissionError('Allow camera or microphone access to start the live call.');
+      return;
+    }
+
+    const stream = new MediaStream(tracks);
+    localStreamRef.current?.getTracks().forEach((track) => track.stop());
+    localStreamRef.current = stream;
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = stream;
+    }
+
+    // Add only the newly acquired tracks to existing peer connections.
+    Object.values(peerConnections.current).forEach((pc) => {
+      tracks.forEach((track) => pc.addTrack(track, stream));
+    });
   };
 
   useEffect(() => {
@@ -220,20 +244,22 @@ export const WebRTCGrid: React.FC<WebRTCGridProps> = ({ currentUser, roomCode })
 
   // Media Toggles
   const toggleAudio = () => {
-    if (!localStreamRef.current) return;
-    const audioTrack = localStreamRef.current.getAudioTracks()[0];
-    if (audioTrack) {
-      audioTrack.enabled = !audioTrack.enabled;
-      setIsAudioMuted(!audioTrack.enabled);
-      socket.emit('webrtc:media-state', {
-        isMuted: !audioTrack.enabled,
-        isVideoOff,
-      });
+    const audioTrack = localStreamRef.current?.getAudioTracks()[0];
+    if (!audioTrack) {
+      void initLocalMedia();
+      return;
     }
+
+    audioTrack.enabled = !audioTrack.enabled;
+    setIsAudioMuted(!audioTrack.enabled);
+    socket.emit('webrtc:media-state', {
+      isMuted: !audioTrack.enabled,
+      isVideoOff,
+    });
   };
 
   const toggleVideo = () => {
-    if (!localStreamRef.current) {
+    if (!localStreamRef.current || !localStreamRef.current.getVideoTracks()[0]) {
       void initLocalMedia();
       return;
     }
@@ -278,19 +304,19 @@ export const WebRTCGrid: React.FC<WebRTCGridProps> = ({ currentUser, roomCode })
           <button
             onClick={toggleVideo}
             title={
-              !hasMediaAccess
+              !hasVideoAccess
                 ? 'Allow Camera'
                 : isVideoOff
                   ? 'Turn Video On'
                   : 'Turn Video Off'
             }
             className={`p-2 rounded-lg transition-colors cursor-pointer ${
-              isVideoOff || !hasMediaAccess
+              isVideoOff || !hasVideoAccess
                 ? 'bg-rose-600/80 text-white hover:bg-rose-600'
                 : 'bg-white/10 hover:bg-white/20 text-emerald-400'
             }`}
           >
-            {isVideoOff || !hasMediaAccess ? (
+            {isVideoOff || !hasVideoAccess ? (
               <VideoOff className="w-4 h-4" />
             ) : (
               <Video className="w-4 h-4" />
@@ -321,11 +347,11 @@ export const WebRTCGrid: React.FC<WebRTCGridProps> = ({ currentUser, roomCode })
             playsInline
             muted
             className={`w-full h-full object-cover transform -scale-x-100 ${
-              isVideoOff || !hasMediaAccess ? 'hidden' : 'block'
+              isVideoOff || !hasVideoAccess ? 'hidden' : 'block'
             }`}
           />
 
-          {(isVideoOff || !hasMediaAccess) && (
+          {(isVideoOff || !hasVideoAccess) && (
             <div className="flex flex-col items-center justify-center p-2">
               <img
                 src={currentUser.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${currentUser.username}`}

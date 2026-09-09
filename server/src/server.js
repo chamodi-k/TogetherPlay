@@ -20,9 +20,12 @@ const app = express();
 const server = http.createServer(app);
 
 const PORT = process.env.PORT || 5000;
-const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
+const configuredClientUrls = (process.env.CLIENT_URL || '')
+  .split(',')
+  .map((url) => url.trim())
+  .filter(Boolean);
 const allowedOrigins = new Set([
-  CLIENT_URL,
+  ...configuredClientUrls,
   'http://localhost:5173',
   'http://127.0.0.1:5173',
 ]);
@@ -92,7 +95,7 @@ async function startServer() {
       console.log('====================================================');
       console.log(`🎬 TogetherPlay Server running on http://localhost:${PORT}`);
       console.log(`📡 Socket.IO Real-time Engine initialized`);
-      console.log(`🔗 Allowed Client Origin: ${CLIENT_URL}`);
+      console.log(`🔗 Allowed Client Origins: ${[...allowedOrigins].join(', ')}`);
       console.log('====================================================');
     });
   } catch (err) {

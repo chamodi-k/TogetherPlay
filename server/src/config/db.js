@@ -291,6 +291,9 @@ export async function query(sql, params = []) {
   if (
     /SELECT .* FROM ROOMS WHERE room_code = \?/i.test(
       normalized
+    ) ||
+    /SELECT .* FROM ROOMS WHERE UPPER\(room_code\) = UPPER\(\?\)/i.test(
+      normalized
     )
   ) {
     const code = (params[0] || '').toUpperCase();

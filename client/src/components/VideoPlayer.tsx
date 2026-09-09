@@ -43,6 +43,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 }) => {
   const socket = getSocket();
   const containerRef = useRef<HTMLDivElement>(null);
+  const youtubeContainerRef = useRef<HTMLDivElement>(null);
   const html5VideoRef = useRef<HTMLVideoElement>(null);
   const ytPlayerRef = useRef<any>(null);
 
@@ -84,7 +85,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         return;
       }
 
-      const playerElement = containerRef.current?.querySelector('#yt-player-container');
+      const playerElement = youtubeContainerRef.current;
       if (!playerElement) return;
 
       ytPlayerRef.current = new (window as any).YT.Player(playerElement, {
@@ -130,8 +131,22 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if ((window as any).YT && (window as any).YT.Player) {
       initYT();
     } else {
-      (window as any).onYouTubeIframeAPIReady = initYT;
+      const previousReadyHandler = (window as any).onYouTubeIframeAPIReady;
+      (window as any).onYouTubeIframeAPIReady = () => {
+        previousReadyHandler?.();
+        initYT();
+      };
     }
+
+    return () => {
+      youtubeReady.current = false;
+      if (ytPlayerRef.current) {
+        try {
+          ytPlayerRef.current.destroy();
+        } catch (e) {}
+        ytPlayerRef.current = null;
+      }
+    };
   }, [youtubeId]);
 
   // Update progress timer
@@ -417,7 +432,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       {/* Video Content Container */}
       <div className="relative w-full h-full flex items-center justify-center bg-black">
         {youtubeId ? (
-          <div id="yt-player-container" className="w-full h-full pointer-events-none" />
+          <div
+            ref={youtubeContainerRef}
+            key={youtubeId}
+            className="w-full h-full pointer-events-none [&>iframe]:w-full [&>iframe]:h-full"
+          />
         ) : (
           <video
             ref={html5VideoRef}
